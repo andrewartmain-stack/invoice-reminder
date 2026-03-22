@@ -1,0 +1,3 @@
+[functions.send-reminders]
+schedule = "0 8 * * *"
+# Запускается каждый день в 08:00 UTC
