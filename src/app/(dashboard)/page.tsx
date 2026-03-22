@@ -55,10 +55,11 @@ export default function DashboardPage() {
     }
 
     async function markAsNotReceived(id: string) {
-        await supabase
-            .from('invoices')
-            .update({ status: 'notified' })
-            .eq('id', id)
+        await fetch('/api/resume-reminders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ invoice_id: id }),
+        })
         fetchInvoices()
     }
 

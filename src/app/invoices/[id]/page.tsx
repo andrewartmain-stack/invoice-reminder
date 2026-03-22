@@ -122,7 +122,17 @@ export default function InvoiceDetailPage() {
                                 <button onClick={() => updateStatus('paid')} style={styles.btnSuccess}>
                                     ✓ Confirm payment received
                                 </button>
-                                <button onClick={() => updateStatus('notified')} style={styles.btnWarning}>
+                                <button
+                                    onClick={async () => {
+                                        await fetch('/api/resume-reminders', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ invoice_id: invoice.id }),
+                                        })
+                                        fetchData()
+                                    }}
+                                    style={styles.btnWarning}
+                                >
                                     ✗ Not received — resume reminders
                                 </button>
                             </>
