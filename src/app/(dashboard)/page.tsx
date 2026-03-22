@@ -26,6 +26,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
     cancelled: { label: 'Cancelled', color: '#6b7280' },
 }
 
+
 export default function DashboardPage() {
     const supabase = createClient()
     const router = useRouter()
@@ -50,6 +51,14 @@ export default function DashboardPage() {
 
     async function markAsPaid(id: string) {
         await supabase.from('invoices').update({ status: 'paid' }).eq('id', id)
+        fetchInvoices()
+    }
+
+    async function markAsNotReceived(id: string) {
+        await supabase
+            .from('invoices')
+            .update({ status: 'notified' })
+            .eq('id', id)
         fetchInvoices()
     }
 
@@ -156,9 +165,14 @@ export default function DashboardPage() {
                                     <span style={styles.amount}>${Number(inv.amount).toLocaleString()}</span>
                                     <div style={styles.actions}>
                                         {inv.status === 'payment_reported' && (
-                                            <button onClick={() => markAsPaid(inv.id)} style={styles.btnSuccess}>
-                                                Confirm paid
-                                            </button>
+                                            <>
+                                                <button onClick={() => markAsPaid(inv.id)} style={styles.btnSuccess}>
+                                                    ✓ Confirm paid
+                                                </button>
+                                                <button onClick={() => markAsNotReceived(inv.id)} style={styles.btnWarning}>
+                                                    ✗ Not received
+                                                </button>
+                                            </>
                                         )}
                                         {!['paid', 'cancelled'].includes(inv.status) && inv.status !== 'payment_reported' && (
                                             <button onClick={() => markAsPaid(inv.id)} style={styles.btnSmall}>
@@ -179,6 +193,17 @@ export default function DashboardPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+    btnWarning: {
+        background: '#ef444420',
+        color: '#ef4444',
+        border: '1px solid #ef444440',
+        borderRadius: '5px',
+        padding: '5px 10px',
+        fontSize: '11px',
+        cursor: 'pointer',
+        fontFamily: "'DM Mono', monospace",
+        fontWeight: '600',
+    },
     page: {
         minHeight: '100vh',
         background: 'var(--bg)',

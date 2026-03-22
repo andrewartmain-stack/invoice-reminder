@@ -118,9 +118,14 @@ export default function InvoiceDetailPage() {
                 {invoice.status !== 'paid' && invoice.status !== 'cancelled' && (
                     <div style={styles.actions}>
                         {invoice.status === 'payment_reported' && (
-                            <button onClick={() => updateStatus('paid')} style={styles.btnSuccess}>
-                                ✓ Confirm payment received
-                            </button>
+                            <>
+                                <button onClick={() => updateStatus('paid')} style={styles.btnSuccess}>
+                                    ✓ Confirm payment received
+                                </button>
+                                <button onClick={() => updateStatus('notified')} style={styles.btnWarning}>
+                                    ✗ Not received — resume reminders
+                                </button>
+                            </>
                         )}
                         {invoice.status !== 'payment_reported' && (
                             <button onClick={() => updateStatus('paid')} style={styles.btnOutline}>
@@ -182,6 +187,17 @@ function MetaItem({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+    btnWarning: {
+        background: '#ef444420',
+        color: '#ef4444',
+        border: '1px solid #ef444440',
+        borderRadius: '6px',
+        padding: '10px 16px',
+        fontSize: '12px',
+        cursor: 'pointer',
+        fontFamily: "'DM Mono', monospace",
+        fontWeight: '600',
+    },
     page: {
         minHeight: '100vh',
         background: 'var(--bg)',
