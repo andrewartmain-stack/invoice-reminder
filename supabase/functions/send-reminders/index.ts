@@ -8,11 +8,41 @@ const supabase = createClient(
 
 const APP_URL = Deno.env.get('APP_URL')!;
 
+// Fallback preset schedules for old invoices
 const PRESET_DAYS: Record<string, number[]> = {
   gentle: [0, 3],
   standard: [0, 3, 7],
   firm: [0, 3, 7, 14],
 };
+
+// Returns { scheduledDays, templateByDay } for an invoice.
+// If reminder_preset is a JSON array of template IDs, look them up.
+// Otherwise fall back to the old preset names.
+async function resolveSchedule(reminderPreset: string) {
+  if (reminderPreset?.startsWith('[')) {
+    try {
+      const templateIds: string[] = JSON.parse(reminderPreset);
+      const { data: templates } = await supabase
+        .from('email_templates')
+        .select('id, day_offset, subject, body')
+        .in('id', templateIds);
+
+      if (templates && templates.length > 0) {
+        const scheduledDays = templates.map((t) => t.day_offset);
+        const templateByDay: Record<number, { subject: string; body: string }> = {};
+        for (const t of templates) {
+          templateByDay[t.day_offset] = { subject: t.subject, body: t.body };
+        }
+        return { scheduledDays, templateByDay };
+      }
+    } catch {
+      // fall through to preset fallback
+    }
+  }
+
+  const scheduledDays = PRESET_DAYS[reminderPreset] || PRESET_DAYS.standard;
+  return { scheduledDays, templateByDay: {} };
+}
 
 Deno.serve(async () => {
   try {
@@ -25,7 +55,7 @@ Deno.serve(async () => {
         `
         id, user_id, client_name, client_email,
         amount, currency, invoice_number, due_date,
-        stripe_payment_link, reminder_preset, status, updated_at
+        stripe_payment_link, reminder_preset, status, updated_at, invoice_file_url
       `,
       )
       .in('status', ['pending', 'notified', 'payment_reported']);
@@ -39,7 +69,7 @@ Deno.serve(async () => {
     const results = [];
 
     for (const invoice of invoices) {
-      // СЛУЧАЙ 1: напоминания клиенту
+      // CASE 1: client reminders
       if (invoice.status === 'pending' || invoice.status === 'notified') {
         const dueDate = new Date(invoice.due_date);
         dueDate.setHours(0, 0, 0, 0);
@@ -48,8 +78,7 @@ Deno.serve(async () => {
           (today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        const scheduledDays =
-          PRESET_DAYS[invoice.reminder_preset] || PRESET_DAYS.standard;
+        const { scheduledDays, templateByDay } = await resolveSchedule(invoice.reminder_preset);
         if (!scheduledDays.includes(dayOffset)) continue;
 
         const { data: existingLog } = await supabase
@@ -63,11 +92,14 @@ Deno.serve(async () => {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('email')
+          .select('email, sender_name')
           .eq('id', invoice.user_id)
           .single();
 
         if (!profile?.email) continue;
+
+        // Use custom template if available for this day, otherwise fall back to built-in logic
+        const template = templateByDay[dayOffset];
 
         const res = await fetch(`${APP_URL}/api/send-reminder`, {
           method: 'POST',
@@ -83,15 +115,20 @@ Deno.serve(async () => {
             invoice_id: invoice.id,
             day_offset: dayOffset,
             freelancer_email: profile.email,
+            sender_name: profile.sender_name,
+            invoice_file_url: invoice.invoice_file_url,
+            template_subject: template?.subject,
+            template_body: template?.body,
           }),
         });
 
         const emailStatus = res.ok ? 'sent' : 'failed';
+        const emailSubject = template?.subject || getSubject(dayOffset, invoice.invoice_number);
 
         await supabase.from('reminder_logs').insert({
           invoice_id: invoice.id,
           day_offset: dayOffset,
-          email_subject: getSubject(dayOffset, invoice.invoice_number),
+          email_subject: emailSubject,
           status: emailStatus,
         });
 
@@ -112,8 +149,7 @@ Deno.serve(async () => {
         continue;
       }
 
-      // СЛУЧАЙ 2: напоминание фрилансеру
-      // Клиент нажал "already paid" но фрилансер не подтвердил 2+ дней
+      // CASE 2: freelancer follow-up when client reported payment but not confirmed
       if (invoice.status === 'payment_reported') {
         const reportedAt = new Date(invoice.updated_at);
         reportedAt.setHours(0, 0, 0, 0);
@@ -122,7 +158,6 @@ Deno.serve(async () => {
           (today.getTime() - reportedAt.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        // Отправляем на день 2 и день 5 после репорта
         if (![2, 5].includes(daysSinceReport)) continue;
 
         const { data: existingFollowup } = await supabase

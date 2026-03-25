@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx shadcn@latest init --help)",
+      "Bash(grep -n \"invoice_file_url\\\\|templates\\\\|Template\\\\|Paperclip\" /c/Users/andre/Desktop/invoice-reminder-saas/src/app/invoices/[id]/page.tsx)",
+      "Bash(find . -maxdepth 1 -type f \\\\\\(-name *.mjs -o -name *.json -o -name *.config.* -o -name .env* -o -name README* \\\\\\))"
+    ]
+  }
+}
