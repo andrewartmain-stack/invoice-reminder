@@ -5,7 +5,10 @@
       "Bash(npx tsc:*)",
       "Bash(npx shadcn@latest init --help)",
       "Bash(grep -n \"invoice_file_url\\\\|templates\\\\|Template\\\\|Paperclip\" /c/Users/andre/Desktop/invoice-reminder-saas/src/app/invoices/[id]/page.tsx)",
-      "Bash(find . -maxdepth 1 -type f \\\\\\(-name *.mjs -o -name *.json -o -name *.config.* -o -name .env* -o -name README* \\\\\\))"
+      "Bash(find . -maxdepth 1 -type f \\\\\\(-name *.mjs -o -name *.json -o -name *.config.* -o -name .env* -o -name README* \\\\\\))",
+      "Bash(find /c/Users/andre/Desktop/invoice-reminder-saas -type d -not -path */node_modules/* -not -path */.next/* -not -path */.claude/* -not -path */.git/*)",
+      "Bash(find c:UsersandreDesktopinvoice-reminder-saas -name *.sql -o -name *schema* -o -name *migration*)",
+      "Bash(kill %1)"
     ]
   }
 }

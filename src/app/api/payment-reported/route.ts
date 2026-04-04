@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { buildThankYouPage } from '@/lib/build-thank-you-page';
+import { resolveThankYouPage } from '@/types/thank-you-page';
+import { resolveDesign } from '@/types/email-design';
 
-// Используем service role — это server-side, RLS не нужен
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -15,51 +16,90 @@ export async function GET(req: Request) {
     return new Response('Invalid link.', { status: 400 });
   }
 
-  // Меняем статус на payment_reported
-  const { error } = await supabase
+  // Try to update status (only if not already confirmed/paid/cancelled)
+  const { data: updated, error } = await supabase
     .from('invoices')
     .update({ status: 'payment_reported' })
     .eq('id', invoice_id)
-    .in('status', ['pending', 'notified']); // не перезаписываем paid/cancelled
+    .in('status', ['pending', 'notified', 'payment_reported'])
+    .select('user_id, client_name, invoice_number')
+    .single();
 
-  if (error) {
+  if (error && error.code !== 'PGRST116') {
     return new Response('Something went wrong.', { status: 500 });
   }
 
-  // Простая страница подтверждения
-  return new Response(
-    `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Payment reported</title>
-  <style>
-    body {
-      margin: 0;
-      background: #0a0a0a;
-      color: #e5e5e5;
-      font-family: monospace;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      flex-direction: column;
-      gap: 12px;
+  // If already paid/cancelled, still fetch invoice for the page render
+  const invoiceData = updated ?? await supabase
+    .from('invoices')
+    .select('user_id, client_name, invoice_number')
+    .eq('id', invoice_id)
+    .single()
+    .then(r => r.data);
+
+  // Broadcast to the owner's app on every click (fires sound + notification regardless of status)
+  if (invoiceData?.user_id) {
+    const broadcastUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/realtime/v1/api/broadcast`;
+    fetch(broadcastUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+      },
+      body: JSON.stringify({
+        messages: [{
+          topic: 'realtime:payment-events',
+          event: 'payment_reported',
+          payload: {
+            invoice_id: invoice_id,
+            user_id: invoiceData.user_id,
+            client_name: invoiceData.client_name,
+            invoice_number: invoiceData.invoice_number,
+          },
+        }],
+      }),
+    }).catch(() => {}); // best-effort, don't block the response
+  }
+
+  // Fetch profile customisation (always fresh — never use cached version)
+  let pageConfig = resolveThankYouPage(null);
+  let logoUrl: string | null = null;
+
+  if (invoiceData?.user_id) {
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('thank_you_page, email_design, sender_name')
+      .eq('id', invoiceData.user_id)
+      .single();
+
+    if (profileError) {
+      console.error('[payment-reported] profile fetch error:', profileError.code, profileError.message);
     }
-    h1 { font-size: 18px; margin: 0; color: #fff; }
-    p  { font-size: 13px; color: #555; margin: 0; }
-  </style>
-</head>
-<body>
-  <h1>✓ Got it, thanks.</h1>
-  <p>We've notified the sender that your payment is on the way.</p>
-</body>
-</html>
-  `,
-    {
-      headers: { 'Content-Type': 'text/html' },
+
+    console.log('[payment-reported] user_id:', invoiceData.user_id, '| profile found:', !!profile, '| thank_you_page:', profile?.thank_you_page);
+
+    if (profile) {
+      // thank_you_page is a JSONB column; guard against it being returned as a JSON string
+      let raw = profile.thank_you_page as Record<string, unknown> | null;
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw) } catch { raw = null }
+      }
+      pageConfig = resolveThankYouPage(raw as Partial<import('@/types/thank-you-page').ThankYouPage> | null);
+      const design = resolveDesign(profile.email_design as Partial<import('@/types/email-design').EmailDesign> | null);
+      logoUrl = design.logo_url || null;
+    }
+  } else {
+    console.error('[payment-reported] invoiceData missing or no user_id:', invoiceData);
+  }
+
+  const html = buildThankYouPage(pageConfig, logoUrl);
+
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
     },
-  );
+  });
 }

@@ -4,18 +4,26 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Paperclip, Calendar, Hash, Clock, Inbox, Zap } from 'lucide-react'
+import { ArrowLeft, Paperclip, Calendar, Hash, Clock, Inbox, Zap, Bell, MessageSquare, Sparkles, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { formatDate, isOverdue } from '@/lib/format'
 import { INVOICE_STATUS_CONFIG } from '@/constants/invoice'
 import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { SectionCard } from '@/components/SectionCard'
+import { notifyPaymentPaid, notifyThankYouSent, notifyReminderSent } from '@/lib/notify'
 import type { Invoice } from '@/types/invoice'
 import type { ReminderLog } from '@/types/reminder-log'
 import type { EmailTemplate } from '@/types/email-template'
 
 type TemplateRef = Pick<EmailTemplate, 'name' | 'day_offset'>
+
+function logTypeIcon(dayOffset: number, status: string) {
+  if (status !== 'sent') return { Icon: XCircle, color: 'text-red-400', bg: 'bg-red-50', label: 'Failed' }
+  if (dayOffset >= 9999) return { Icon: Sparkles, color: 'text-emerald-500', bg: 'bg-emerald-50', label: 'Thank you' }
+  if (dayOffset >= 1000) return { Icon: MessageSquare, color: 'text-amber-500', bg: 'bg-amber-50', label: 'Follow-up' }
+  return { Icon: Bell, color: 'text-blue-500', bg: 'bg-blue-50', label: 'Reminder' }
+}
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -36,6 +44,12 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { fetchData() }, [id])
+
+  useEffect(() => {
+    const handler = () => fetchData()
+    window.addEventListener('paynudge:refresh', handler)
+    return () => window.removeEventListener('paynudge:refresh', handler)
+  }, [])
 
   async function fetchData() {
     const [{ data: inv }, { data: logData }] = await Promise.all([
@@ -67,6 +81,60 @@ export default function InvoiceDetailPage() {
 
   async function updateStatus(status: string) {
     await supabase.from('invoices').update({ status }).eq('id', id)
+    fetchData()
+  }
+
+  async function markAsPaid() {
+    if (!invoice) return
+    await supabase.from('invoices').update({ status: 'paid' }).eq('id', id)
+    notifyPaymentPaid(invoice.client_name, invoice.invoice_number)
+    // Send thank you email (best-effort, non-blocking)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('email, sender_name, email_design, default_template_ids').eq('id', user.id).single()
+      const defaultIds = profile?.default_template_ids as { rejection?: string | null; thank_you?: string | null } | null
+      const tyTemplateId = defaultIds?.thank_you
+      let template = null
+      if (tyTemplateId) {
+        const { data } = await supabase.from('email_templates').select('*').eq('id', tyTemplateId).single()
+        template = data
+      } else {
+        const { data } = await supabase.from('email_templates').select('*').eq('type', 'thank_you').eq('user_id', user.id).limit(1)
+        template = data?.[0] ?? null
+      }
+      if (profile?.email) {
+        fetch('/api/send-thankyou', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: invoice.client_name,
+            client_email: invoice.client_email,
+            amount: invoice.amount,
+            currency: invoice.currency,
+            invoice_number: invoice.invoice_number,
+            freelancer_email: profile.email,
+            sender_name: profile.sender_name,
+            template_subject: template?.subject,
+            template_body: template?.body,
+            email_design: profile.email_design,
+          }),
+        }).then(async r => {
+          if (r.ok) {
+            notifyThankYouSent(invoice!.client_name, invoice!.invoice_number)
+            await supabase.from('reminder_logs').insert({
+              invoice_id: id,
+              day_offset: 9999,
+              email_subject: template?.subject
+                ? template.subject.replace(/\{\{invoice_number\}\}/g, invoice!.invoice_number ?? '')
+                : `Thank you — ${invoice!.client_name}`,
+              status: 'sent',
+              client_name: invoice!.client_name,
+            })
+            fetchData()
+          }
+        })
+      }
+    }
     fetchData()
   }
 
@@ -104,7 +172,7 @@ export default function InvoiceDetailPage() {
     : null
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-[Inter,sans-serif] anim-fade">
+    <div className="min-h-screen bg-background text-foreground font-[Inter,sans-serif] anim-fade rounded-l-2xl">
 
       {/* Header */}
       <header className="flex items-center justify-between px-8 pt-8 pb-5">
@@ -213,30 +281,30 @@ export default function InvoiceDetailPage() {
                   </div>
                 ) : (
                   <div className="flex flex-col">
-                    {logs.map((log, i) => (
-                      <div key={log.id} className="flex items-start gap-4 pb-5 last:pb-0">
-                        <div className="flex flex-col items-center shrink-0 pt-1">
-                          <div className={cn('w-2 h-2 rounded-full', log.status === 'sent' ? 'bg-black/50' : 'bg-destructive')} />
-                          {i < logs.length - 1 && <div className="w-px flex-1 min-h-6 bg-black/8 mt-1.5" />}
+                    {logs.map((log, i) => {
+                      const { Icon, color, bg, label } = logTypeIcon(log.day_offset, log.status)
+                      return (
+                        <div key={log.id} className="flex items-start gap-3 pb-5 last:pb-0">
+                          <div className="flex flex-col items-center shrink-0">
+                            <div className={cn('w-7 h-7 rounded-lg flex items-center justify-center shrink-0', bg)}>
+                              <Icon size={14} strokeWidth={1.8} className={color} />
+                            </div>
+                            {i < logs.length - 1 && <div className="w-px flex-1 min-h-5 bg-black/8 mt-1" />}
+                          </div>
+                          <div className="flex-1 min-w-0 pt-0.5">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className={cn('text-[10px] font-semibold uppercase tracking-wider', color)}>{label}</span>
+                            </div>
+                            <p className="text-[13px] font-medium text-foreground m-0 mb-0.5 leading-snug">
+                              {log.email_subject || `Email day +${log.day_offset}`}
+                            </p>
+                            <p className="text-[11px] text-black/35 m-0">
+                              {formatDate(log.sent_at, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[14px] font-medium text-foreground m-0 mb-1 leading-snug">
-                            {log.email_subject || `Reminder day +${log.day_offset}`}
-                          </p>
-                          <p className="text-[12px] text-black/40 m-0">
-                            {formatDate(log.sent_at, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          </p>
-                        </div>
-                        <span className={cn(
-                          'text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0 mt-0.5',
-                          log.status === 'sent'
-                            ? 'bg-black/6 text-black/50 border border-black/10'
-                            : 'bg-destructive/10 text-destructive border border-destructive/25',
-                        )}>
-                          {log.status}
-                        </span>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -252,7 +320,7 @@ export default function InvoiceDetailPage() {
                 <div className="p-5 flex flex-col gap-2.5">
                   {invoice.status === 'payment_reported' ? (
                     <>
-                      <Button size="lg" className="w-full active:scale-[0.98]" onClick={() => updateStatus('paid')}>
+                      <Button size="lg" className="w-full active:scale-[0.98]" onClick={markAsPaid}>
                         ✓ Confirm payment received
                       </Button>
                       <Button
@@ -260,11 +328,12 @@ export default function InvoiceDetailPage() {
                         variant="destructive"
                         className="w-full active:scale-[0.98]"
                         onClick={async () => {
-                          await fetch('/api/resume-reminders', {
+                          const res = await fetch('/api/resume-reminders', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ invoice_id: invoice.id }),
                           })
+                          if (res.ok) notifyReminderSent('Reminder resumed', [invoice.client_name])
                           fetchData()
                         }}
                       >
@@ -273,7 +342,7 @@ export default function InvoiceDetailPage() {
                     </>
                   ) : (
                     <>
-                      <Button size="lg" className="w-full active:scale-[0.98]" onClick={() => updateStatus('paid')}>
+                      <Button size="lg" className="w-full active:scale-[0.98]" onClick={markAsPaid}>
                         Mark as paid
                       </Button>
                       <Button size="lg" variant="secondary" className="w-full active:scale-[0.98]" onClick={() => updateStatus('cancelled')}>

@@ -1,6 +1,6 @@
 import { Resend } from 'resend';
 import { NextResponse } from 'next/server';
-import { buildFollowupEmail, buildFollowupFromTemplate } from '@/lib/build-email';
+import { buildThankYouEmail, buildThankYouFromTemplate } from '@/lib/build-email';
 import { resolveDesign } from '@/types/email-design';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -13,13 +13,12 @@ export async function POST(req: Request) {
   const body = await req.json();
 
   const {
-    freelancer_email,
     client_name,
+    client_email,
     amount,
     currency,
     invoice_number,
-    invoice_id,
-    days_since_report,
+    freelancer_email,
     sender_name,
     template_subject,
     template_body,
@@ -33,24 +32,16 @@ export async function POST(req: Request) {
     client_name: client_name ?? '',
     invoice_number: invoice_number ?? '',
     amount: formattedAmount,
-    days_since_report: String(days_since_report ?? ''),
     sender_name: sender_name ?? '',
   };
 
   const subject = template_subject
     ? substituteVars(template_subject, vars)
-    : `${client_name} reported payment ${days_since_report} days ago — confirm?`;
+    : `Thank you for your payment${inv}`;
 
   const html = template_body
-    ? buildFollowupFromTemplate({
-        bodyText: substituteVars(template_body, vars),
-        invoice_id,
-        rawDesign: email_design,
-      })
-    : buildFollowupEmail({
-        client_name, inv, formattedAmount, days_since_report, invoice_id,
-        rawDesign: email_design,
-      });
+    ? buildThankYouFromTemplate({ bodyText: substituteVars(template_body, vars), rawDesign: email_design })
+    : buildThankYouEmail({ client_name, inv, formattedAmount, sender_name, rawDesign: email_design });
 
   const design = resolveDesign(email_design);
   const fromName = sender_name || design.brand_name;
@@ -58,7 +49,8 @@ export async function POST(req: Request) {
 
   const { data, error } = await resend.emails.send({
     from: `${fromName} <${fromAddress}>`,
-    to: freelancer_email,
+    to: client_email,
+    replyTo: freelancer_email,
     subject,
     html,
   });

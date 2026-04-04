@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import ThemeProvider from '../components/ThemeProvider'
+import { Toaster } from 'sonner'
 
 export const metadata: Metadata = {
   title: 'paynudge',
@@ -19,8 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           __html: `try{var t=localStorage.getItem('theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark')}catch(e){}`
         }} />
       </head>
-      <body style={{ margin: 0, padding: 0 }}>
+      <body style={{ margin: 0, padding: 0 }} className='bg-black/95'>
         <ThemeProvider>{children}</ThemeProvider>
+        <Toaster position="bottom-right" richColors closeButton />
       </body>
     </html>
   )

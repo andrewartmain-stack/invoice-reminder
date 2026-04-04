@@ -92,7 +92,7 @@ Deno.serve(async () => {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('email, sender_name')
+          .select('email, sender_name, email_design')
           .eq('id', invoice.user_id)
           .single();
 
@@ -119,6 +119,7 @@ Deno.serve(async () => {
             invoice_file_url: invoice.invoice_file_url,
             template_subject: template?.subject,
             template_body: template?.body,
+            email_design: profile.email_design,
           }),
         });
 
@@ -130,6 +131,7 @@ Deno.serve(async () => {
           day_offset: dayOffset,
           email_subject: emailSubject,
           status: emailStatus,
+          client_name: invoice.client_name,
         });
 
         if (res.ok && invoice.status === 'pending') {
@@ -158,7 +160,20 @@ Deno.serve(async () => {
           (today.getTime() - reportedAt.getTime()) / (1000 * 60 * 60 * 24),
         );
 
-        if (![2, 5].includes(daysSinceReport)) continue;
+        // Look up user's custom follow_up templates; fall back to [2, 5] if none
+        const { data: followupTemplates } = await supabase
+          .from('email_templates')
+          .select('id, day_offset, subject, body')
+          .eq('user_id', invoice.user_id)
+          .eq('type', 'follow_up');
+
+        const followupDays = followupTemplates && followupTemplates.length > 0
+          ? followupTemplates.map((t) => t.day_offset)
+          : [2, 5];
+
+        if (!followupDays.includes(daysSinceReport)) continue;
+
+        const followupTemplate = followupTemplates?.find((t) => t.day_offset === daysSinceReport);
 
         const { data: existingFollowup } = await supabase
           .from('reminder_logs')
@@ -171,7 +186,7 @@ Deno.serve(async () => {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('email')
+          .select('email, sender_name, email_design')
           .eq('id', invoice.user_id)
           .single();
 
@@ -188,6 +203,10 @@ Deno.serve(async () => {
             invoice_number: invoice.invoice_number,
             invoice_id: invoice.id,
             days_since_report: daysSinceReport,
+            sender_name: profile.sender_name,
+            template_subject: followupTemplate?.subject,
+            template_body: followupTemplate?.body,
+            email_design: profile.email_design,
           }),
         });
 
@@ -198,6 +217,7 @@ Deno.serve(async () => {
           day_offset: 1000 + daysSinceReport,
           email_subject: `Follow-up: ${invoice.client_name} reported payment ${daysSinceReport} days ago`,
           status: emailStatus,
+          client_name: invoice.client_name,
         });
 
         sent++;

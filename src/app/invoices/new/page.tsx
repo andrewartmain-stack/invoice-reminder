@@ -45,7 +45,7 @@ export default function NewInvoicePage() {
     async function fetchTemplates() {
       const { data } = await supabase
         .from('email_templates')
-        .select('id, name, subject, body, day_offset, created_at')
+        .select('id, name, subject, body, day_offset, type, created_at')
         .order('day_offset', { ascending: true })
       setTemplates(data || [])
       if (data && data.length > 0) {
@@ -127,7 +127,7 @@ export default function NewInvoicePage() {
   )
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-[Inter,sans-serif] anim-fade">
+    <div className="min-h-screen bg-background text-foreground font-[Inter,sans-serif] anim-fade rounded-l-2xl">
 
       <header className="flex items-center justify-between px-8 pt-8 pb-5">
         <Link href="/invoices" className="flex items-center gap-1.5 text-[14px] text-black/45 hover:text-black no-underline transition-colors font-medium">
